@@ -12,7 +12,7 @@ DASHBOARD_URL = f"{BASE}/dashboard"
 USERNAME = os.environ.get("HOHAI_USERNAME", "u1888")
 PASSWORD = os.environ.get("HOHAI_PASSWORD", "zn552297")
 PROFILE_DIR = os.environ.get("HOHAI_SB_PROFILE", "/root/.config/seleniumbase-hohai")
-HEADED = os.environ.get("HOHAI_HEADED", "0") == "1"
+HEADED = os.environ.get("HOHAI_HEADED", "1") == "1"
 
 
 def done(ok, message, **extra):
