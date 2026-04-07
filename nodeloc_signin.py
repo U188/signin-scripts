@@ -162,15 +162,8 @@ async def signin():
                 except Exception:
                     pass
 
-def kill_cdp_chrome():
-    """签到完成后 kill 本次启动的 CDP Chrome 进程"""
-    import subprocess
-    subprocess.run(['pkill', '-f', 'chrome.*remote-debugging-port=18800'], capture_output=True)
-    print('[cleanup] Chrome CDP 进程已清理')
-
 if __name__ == "__main__":
     result = asyncio.run(signin())
-    kill_cdp_chrome()
     print(f"\nNodeLoc 签到战报")
     print(f"时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     if result == "success":

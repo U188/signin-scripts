@@ -1,97 +1,148 @@
 #!/usr/bin/env node
-import { execFileSync } from 'child_process';
 import process from 'process';
+import { execFileSync } from 'child_process';
 
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || '/usr/local/node/bin/openclaw';
-
-function sleepMs(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function runOpenClaw(args, { json = false, retries = 3 } = {}) {
-  // --json 需插在子命令之后（openclaw --log-level silent browser --json status）
-  let finalArgs;
-  if (json) {
-    const firstNonFlag = args.findIndex(a => !a.startsWith('-'));
-    const insertAt = firstNonFlag >= 0 ? firstNonFlag + 1 : args.length;
-    finalArgs = ['--log-level', 'silent', ...args.slice(0, insertAt), '--json', ...args.slice(insertAt)];
-  } else {
-    finalArgs = ['--log-level', 'silent', ...args];
-  }
-
-  let lastErr;
-  for (let attempt = 1; attempt <= retries; attempt += 1) {
-    try {
-      const out = execFileSync(OPENCLAW_BIN, finalArgs, {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 90000,
-      }).trim();
-      return json ? JSON.parse(out) : out;
-    } catch (err) {
-      lastErr = err;
-      const msg = [err?.message, err?.stderr?.toString?.(), err?.stdout?.toString?.()].filter(Boolean).join('\n');
-      const retryable = /gateway timeout|timed out|ECONNRESET|ECONNREFUSED|socket hang up/i.test(msg);
-      if (!retryable || attempt >= retries) throw err;
-      const delay = attempt * 1500;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
-    }
-  }
-  throw lastErr;
-}
+const CDP_HTTP = process.env.OPENCLAW_CDP_HTTP || 'http://127.0.0.1:18800';
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function wait(ms) {
-  runOpenClaw(['browser', 'wait', '--time', String(ms)]);
-  await sleep(50);
-}
-
-function browserJson(args) {
-  return runOpenClaw(['browser', ...args], { json: true });
-}
-
-function browserText(args) {
-  return runOpenClaw(['browser', ...args], { json: false });
-}
-
-function ensureBrowser() {
-  const status = browserJson(['status']);
-  if (!status?.running || !status?.cdpReady) {
-    browserText(['start']);
+async function jsonFetch(url, options = {}) {
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`${url} -> HTTP ${res.status}${text ? ` ${text.slice(0, 200)}` : ''}`);
   }
+  return res.json();
 }
 
-function evalPage(targetId, fn) {
-  const res = browserJson(['evaluate', '--target-id', targetId, '--fn', fn]);
-  return res?.result;
+async function ensureBrowser() {
+  try {
+    execFileSync(OPENCLAW_BIN, ['--log-level', 'silent', 'browser', 'start'], {
+      stdio: ['ignore', 'ignore', 'ignore'],
+      timeout: 20000,
+    });
+  } catch {}
+
+  let lastErr;
+  for (let i = 0; i < 10; i += 1) {
+    try {
+      await jsonFetch(`${CDP_HTTP}/json/version`);
+      return;
+    } catch (err) {
+      lastErr = err;
+      await sleep(1000);
+    }
+  }
+  throw lastErr;
 }
 
-function openPage(url) {
-  const opened = browserJson(['open', url]);
-  return opened?.targetId;
+async function openPage(url) {
+  const opened = await jsonFetch(`${CDP_HTTP}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' });
+  return opened?.id || null;
 }
 
-function navigate(targetId, url) {
-  browserText(['navigate', '--target-id', targetId, url]);
+async function findTarget(targetId) {
+  const targets = await jsonFetch(`${CDP_HTTP}/json/list`);
+  return targets.find((t) => t.id === targetId) || null;
 }
 
-function closePage(targetId) {
+async function withWs(targetId, fn) {
+  const target = await findTarget(targetId);
+  if (!target?.webSocketDebuggerUrl) throw new Error('找不到页面 websocket');
+  return await new Promise((resolve, reject) => {
+    const ws = new WebSocket(target.webSocketDebuggerUrl);
+    let seq = 0;
+    const pending = new Map();
+    let closed = false;
+
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      for (const { reject } of pending.values()) {
+        reject(new Error('CDP websocket 已关闭'));
+      }
+      pending.clear();
+      try { ws.close(); } catch {}
+    };
+
+    const call = (method, params = {}) => new Promise((resolveCall, rejectCall) => {
+      const id = ++seq;
+      pending.set(id, { resolve: resolveCall, reject: rejectCall });
+      ws.send(JSON.stringify({ id, method, params }), (err) => {
+        if (err) {
+          pending.delete(id);
+          rejectCall(err);
+        }
+      });
+    });
+
+    ws.addEventListener('open', async () => {
+      try {
+        const result = await fn({ call });
+        cleanup();
+        resolve(result);
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
+    });
+
+    ws.addEventListener('message', (event) => {
+      try {
+        const raw = typeof event.data === 'string' ? event.data : '';
+        const msg = JSON.parse(raw);
+        if (!msg.id) return;
+        const item = pending.get(msg.id);
+        if (!item) return;
+        pending.delete(msg.id);
+        if (msg.error) item.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+        else item.resolve(msg.result || {});
+      } catch (err) {}
+    });
+
+    ws.addEventListener('error', (err) => {
+      cleanup();
+      reject(err);
+    });
+
+    ws.addEventListener('close', () => {
+      if (!closed) {
+        cleanup();
+      }
+    });
+  });
+}
+
+async function evalPage(targetId, fn) {
+  return await withWs(targetId, async ({ call }) => {
+    await call('Runtime.enable');
+    const res = await call('Runtime.evaluate', {
+      expression: `(${fn})()`,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    return res?.result?.value;
+  });
+}
+
+async function navigate(targetId, url) {
+  await withWs(targetId, async ({ call }) => {
+    await call('Page.enable');
+    await call('Page.navigate', { url });
+  });
+}
+
+async function closePage(targetId) {
   if (!targetId) return;
   try {
-    browserText(['close', '--target-id', targetId]);
+    await fetch(`${CDP_HTTP}/json/close/${targetId}`);
   } catch {}
 }
 
-function stopBrowser() {
-  try {
-    browserText(['stop']);
-  } catch {}
-}
-
-function clickByText(targetId, terms) {
+async function clickByText(targetId, terms) {
   const fn = `() => {
     const wanted = ${JSON.stringify(terms)};
     const isVisible = (el) => {
@@ -112,11 +163,11 @@ function clickByText(targetId, terms) {
     el.click();
     return { clicked: true, text, found: candidates.slice(0, 5).map(textOf) };
   }`;
-  return evalPage(targetId, fn);
+  return await evalPage(targetId, fn);
 }
 
-function getBodyText(targetId) {
-  const txt = evalPage(targetId, '() => document.body.innerText');
+async function getBodyText(targetId) {
+  const txt = await evalPage(targetId, '() => document.body.innerText');
   return typeof txt === 'string' ? txt : '';
 }
 
@@ -154,15 +205,15 @@ function hasCaptchaBlocker(text) {
 }
 
 async function main() {
-  ensureBrowser();
+  await ensureBrowser();
   let targetId = null;
 
   try {
-    targetId = openPage('https://www.nodeseek.com/board');
+    targetId = await openPage('https://www.nodeseek.com/board');
     if (!targetId) throw new Error('无法打开 NodeSeek 签到页');
 
-    await wait(2200);
-    let boardText = getBodyText(targetId);
+    await sleep(2200);
+    let boardText = await getBodyText(targetId);
 
     if (hasLoginBlocker(boardText)) {
       console.log('NodeSeek 自动签到战报\n\n[执行受阻] NodeSeek\n🔐 登录状态: 当前未登录，需要先登录 NodeSeek 账号');
@@ -177,21 +228,21 @@ async function main() {
     let tryLuckResult = null;
 
     if (boardText.includes('今日还未签到')) {
-      const signClick = clickByText(targetId, ['鸡腿 x', '鸡腿x', '鸡腿 ×', '签到']);
+      const signClick = await clickByText(targetId, ['鸡腿 x', '鸡腿x', '鸡腿 ×', '签到']);
       if (!signClick?.clicked) {
         console.log('NodeSeek 自动签到战报\n\n[执行受阻] NodeSeek\n⚠️ 签到按钮: 检测到今日未签到，但没有找到可点击的签到按钮');
         return;
       }
       claimedThisRun = true;
-      await wait(2500);
-      boardText = getBodyText(targetId);
+      await sleep(2500);
+      boardText = await getBodyText(targetId);
     }
 
     const beforeTryLuckText = boardText;
-    const tryLuckClick = clickByText(targetId, ['试试手气']);
+    const tryLuckClick = await clickByText(targetId, ['试试手气']);
     if (tryLuckClick?.clicked) {
-      await wait(1800);
-      const afterTryLuckText = getBodyText(targetId);
+      await sleep(1800);
+      const afterTryLuckText = await getBodyText(targetId);
       const delta = afterTryLuckText.replace(beforeTryLuckText, '').trim();
       if (delta && !delta.includes('试试手气')) {
         tryLuckResult = delta.split('\n').map((s) => s.trim()).filter(Boolean).slice(0, 3).join(' / ');
@@ -206,9 +257,9 @@ async function main() {
     let totalChicken = extractChickenTotal(boardText);
 
     if (!totalChicken) {
-      navigate(targetId, 'https://www.nodeseek.com/');
-      await wait(2200);
-      const homeText = getBodyText(targetId);
+      await navigate(targetId, 'https://www.nodeseek.com/');
+      await sleep(2200);
+      const homeText = await getBodyText(targetId);
       totalChicken = extractChickenTotal(homeText);
     }
 
@@ -233,12 +284,12 @@ async function main() {
 
     console.log(lines.join('\n'));
   } finally {
-    closePage(targetId);
-    stopBrowser();
+    await closePage(targetId);
   }
 }
 
 main().catch((err) => {
-  console.log(`NodeSeek 自动签到战报\n\n[执行失败] NodeSeek\n❌ 错误信息: ${err?.message || String(err)}`);
+  const detail = [err?.message || String(err), err?.cause?.message, err?.stack].filter(Boolean).join('\n');
+  console.log(`NodeSeek 自动签到战报\n\n[执行失败] NodeSeek\n❌ 错误信息: ${detail}`);
   process.exit(1);
 });
