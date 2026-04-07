@@ -19,11 +19,13 @@ async function jsonFetch(url, options = {}) {
 }
 
 async function ensureBrowser() {
+  let startAttempted = false;
   try {
     execFileSync(OPENCLAW_BIN, ['--log-level', 'silent', 'browser', 'start'], {
       stdio: ['ignore', 'ignore', 'ignore'],
       timeout: 20000,
     });
+    startAttempted = true;
   } catch {}
 
   let lastErr;
@@ -36,7 +38,15 @@ async function ensureBrowser() {
       await sleep(1000);
     }
   }
-  throw lastErr;
+
+  const hints = [
+    `CDP 地址不可用：${CDP_HTTP}`,
+    startAttempted
+      ? `已尝试调用 OpenClaw 浏览器启动：${OPENCLAW_BIN} browser start，但仍未连上 CDP`
+      : `未能通过 OpenClaw 启动浏览器，请确认 ${OPENCLAW_BIN} 可用`,
+    '如果当前环境没有 OpenClaw，请先手动启动带 --remote-debugging-port=18800 的 Chrome/Chromium。',
+  ].join('\n');
+  throw new Error(`${hints}\n${lastErr?.message || lastErr || ''}`);
 }
 
 async function openPage(url) {
