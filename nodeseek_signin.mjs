@@ -1,9 +1,20 @@
 #!/usr/bin/env node
 import process from 'process';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
+import fs from 'fs';
 
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || '/usr/local/node/bin/openclaw';
 const CDP_HTTP = process.env.OPENCLAW_CDP_HTTP || 'http://127.0.0.1:18800';
+const CHROME_BIN = process.env.CHROME_BIN || '/usr/bin/google-chrome';
+const CHROME_USER_DATA_DIR = process.env.CHROME_USER_DATA_DIR || '/root/.openclaw/browser/openclaw/user-data';
+const FALLBACK_USER_DATA_DIR = process.env.NODESEEK_FALLBACK_USER_DATA_DIR || '/root/.config/nodeseek-cdp';
+const CDP_WAIT_ROUNDS = Number(process.env.NODESEEK_CDP_WAIT_ROUNDS || 60);
+const CDP_WAIT_MS = Number(process.env.NODESEEK_CDP_WAIT_MS || 500);
+const WebSocketImpl = globalThis.WebSocket;
+
+if (!WebSocketImpl) {
+  throw new Error('当前 Node 环境不支持 WebSocket，请使用 /usr/local/node/bin/node');
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -18,35 +29,65 @@ async function jsonFetch(url, options = {}) {
   return res.json();
 }
 
+async function waitForCdp(rounds = CDP_WAIT_ROUNDS, intervalMs = CDP_WAIT_MS) {
+  let lastErr;
+  for (let i = 0; i < rounds; i += 1) {
+    try {
+      await jsonFetch(`${CDP_HTTP}/json/version`);
+      return null;
+    } catch (err) {
+      lastErr = err;
+      await sleep(intervalMs);
+    }
+  }
+  return lastErr;
+}
+
 async function ensureBrowser() {
-  let startAttempted = false;
   try {
     execFileSync(OPENCLAW_BIN, ['--log-level', 'silent', 'browser', 'start'], {
       stdio: ['ignore', 'ignore', 'ignore'],
       timeout: 20000,
     });
-    startAttempted = true;
   } catch {}
 
-  let lastErr;
-  for (let i = 0; i < 10; i += 1) {
+  let lastErr = await waitForCdp(10, 1000);
+  if (!lastErr) return { launchedProc: null };
+
+  const logPath = '/tmp/nodeseek-chrome-18800.log';
+  for (const userDataDir of [CHROME_USER_DATA_DIR, FALLBACK_USER_DATA_DIR]) {
+    fs.mkdirSync(userDataDir, { recursive: true });
+    const out = fs.openSync(logPath, 'a');
+    const proc = spawn(CHROME_BIN, [
+      '--remote-debugging-port=18800',
+      `--user-data-dir=${userDataDir}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-gpu',
+      '--headless=new',
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      'about:blank',
+    ], {
+      detached: false,
+      stdio: ['ignore', out, out],
+    });
+
+    lastErr = await waitForCdp();
+    if (!lastErr) return { launchedProc: proc };
+
+    try { proc.kill('SIGTERM'); } catch {}
+    let tail = '';
     try {
-      await jsonFetch(`${CDP_HTTP}/json/version`);
-      return;
-    } catch (err) {
-      lastErr = err;
-      await sleep(1000);
-    }
+      tail = fs.readFileSync(logPath, 'utf8').slice(-1200);
+    } catch {}
+    console.log(`[NodeSeek] Chrome 启动失败，切换 user-data-dir：${userDataDir}`);
+    lastErr = new Error(`${lastErr?.message || lastErr}
+user-data-dir=${userDataDir}
+log_tail=${tail || '<empty>'}`);
   }
 
-  const hints = [
-    `CDP 地址不可用：${CDP_HTTP}`,
-    startAttempted
-      ? `已尝试调用 OpenClaw 浏览器启动：${OPENCLAW_BIN} browser start，但仍未连上 CDP`
-      : `未能通过 OpenClaw 启动浏览器，请确认 ${OPENCLAW_BIN} 可用`,
-    '如果当前环境没有 OpenClaw，请先手动启动带 --remote-debugging-port=18800 的 Chrome/Chromium。',
-  ].join('\n');
-  throw new Error(`${hints}\n${lastErr?.message || lastErr || ''}`);
+  throw lastErr;
 }
 
 async function openPage(url) {
@@ -63,7 +104,7 @@ async function withWs(targetId, fn) {
   const target = await findTarget(targetId);
   if (!target?.webSocketDebuggerUrl) throw new Error('找不到页面 websocket');
   return await new Promise((resolve, reject) => {
-    const ws = new WebSocket(target.webSocketDebuggerUrl);
+    const ws = new WebSocketImpl(target.webSocketDebuggerUrl);
     let seq = 0;
     const pending = new Map();
     let closed = false;
@@ -215,7 +256,7 @@ function hasCaptchaBlocker(text) {
 }
 
 async function main() {
-  await ensureBrowser();
+  const { launchedProc } = await ensureBrowser();
   let targetId = null;
 
   try {
@@ -295,6 +336,7 @@ async function main() {
     console.log(lines.join('\n'));
   } finally {
     await closePage(targetId);
+    try { launchedProc?.kill('SIGTERM'); } catch {}
   }
 }
 
