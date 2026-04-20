@@ -344,26 +344,10 @@
     "list": [
       {
         "id": "main",
-        "workspace": "/root/.openclaw/workspace-main",
+        "workspace": "/root/.openclaw/workspace",
         "agentDir": "/root/.openclaw/agents/main",
-        "model": "sub2api/gpt-5.4",
-        "subagents": {
-          "allowAgents": [
-            "tech"
-          ]
-        }
-      },
-      {
-        "id": "tech",
-        "workspace": "/root/.openclaw/workspace-tech",
-        "agentDir": "/root/.openclaw/agents/tech",
-        "model": "umans2api/umans-glm-5.1",
-        "tools": {
-          "deny": [
-            "browser",
-            "nodes"
-          ]
-        }
+        "model": "sub2api/gpt-5.4"
+        
       }
     ]
   },
@@ -389,8 +373,8 @@
     "agentToAgent": {
       "enabled": true,
       "allow": [
-        "main",
-        "tech"
+        "main"
+      
       ]
     }
   },
@@ -400,13 +384,6 @@
       "match": {
         "channel": "telegram",
         "accountId": "main"
-      }
-    },
-    {
-      "agentId": "tech",
-      "match": {
-        "channel": "telegram",
-        "accountId": "tech"
       }
     }
   ],
@@ -460,7 +437,7 @@
       "accounts": {
         "main": {
           "dmPolicy": "pairing",
-          "botToken": "7782089550:AAEUqhMiqcPdZJ4vzhfWGLGG3yBuQyl-Lgs",
+          "botToken": "8073730804:AAFTV8aaFCzB2Ur2Jya1g8tidhgNEapsrDw",
           "groups": {
             "-1003811040147": {
               "requireMention": false,
@@ -469,15 +446,6 @@
               ]
             }
           },
-          "groupPolicy": "allowlist",
-          "streaming": "partial"
-        },
-        "tech": {
-          "dmPolicy": "pairing",
-          "botToken": "8786022790:AAHgJ0bnuLmJkJc_RZrUYYyWIxs1hXml7QI",
-          "allowFrom": [
-            "7387265533"
-          ],
           "groupPolicy": "allowlist",
           "streaming": "partial"
         }
