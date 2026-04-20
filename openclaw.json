@@ -1,0 +1,551 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.3.24",
+    "lastTouchedAt": "2026-04-18T01:31:23.068Z"
+  },
+  "wizard": {
+    "lastRunAt": "2026-03-15T22:26:35.521Z",
+    "lastRunVersion": "2026.3.13",
+    "lastRunCommand": "doctor",
+    "lastRunMode": "local"
+  },
+  "browser": {
+    "noSandbox": true
+  },
+  "auth": {
+    "profiles": {}
+  },
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "sub2api": {
+        "baseUrl": "http://49.233.38.144:9999/v1",
+        "apiKey": "zn552297",
+        "api": "openai-completions",
+        "headers": {
+          "User-Agent": "RikkaHub-Android/2.1.7",
+          "Accept": "text/event-stream",
+          "Content-Type": "application/json; charset=UTF-8"
+        },
+        "models": [
+          {
+            "id": "gpt-5.4",
+            "name": "gpt-5.4 (sub2api)",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 8192
+          },
+          {
+            "id": "claude-opus-4-6",
+            "name": "claude-opus-4-6 (sub2api)",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 8192
+          }
+        ]
+      },
+      "muyuan": {
+        "baseUrl": "https://muyuan.do/v1",
+        "apiKey": "sk-8dQIsKR1E7S3vo1IZguo4L8uvWQyBOCC8Xl6HvyYY6XIki2N",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "claude-opus-4-7",
+            "name": "claude-opus-4-7"
+          }
+        ]
+      },
+      "grok2api": {
+        "baseUrl": "https://grok.gtu.qzz.io/v1",
+        "apiKey": "xm552297",
+        "api": "openai-completions",
+        "headers": {
+          "User-Agent": "RikkaHub-Android/2.1.7",
+          "Accept": "text/event-stream",
+          "Content-Type": "application/json; charset=UTF-8"
+        },
+        "models": [
+          {
+            "id": "grok-4.1-fast",
+            "name": "Grok 4.1 Fast",
+            "api": "openai-completions",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 8192
+          },
+          {
+            "id": "grok-4-heavy",
+            "name": "Grok 4 Heavy",
+            "api": "openai-completions",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 8192
+          },
+          {
+            "id": "grok-4.20-beta",
+            "name": "Grok 4.20 Beta",
+            "api": "openai-completions",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 8192
+          },
+          {
+            "id": "grok-imagine-1.0",
+            "name": "Grok Imagine",
+            "api": "openai-completions",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 8192
+          },
+          {
+            "id": "grok-imagine-1.0-edit",
+            "name": "Grok Imagine Edit",
+            "api": "openai-completions",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 8192
+          },
+          {
+            "id": "grok-imagine-1.0-video",
+            "name": "Grok Imagine Video",
+            "api": "openai-completions",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 8192
+          }
+        ]
+      },
+      "freebuff": {
+        "baseUrl": "https://xiaoyi7894-fb.hf.space/v1",
+        "apiKey": "xm552297",
+        "api": "openai-completions",
+        "injectNumCtxForOpenAICompat": false,
+        "headers": {
+          "User-Agent": "RikkaHub-Android/2.1.7",
+          "Accept": "text/event-stream",
+          "Content-Type": "application/json; charset=UTF-8"
+        },
+        "models": [
+          {
+            "id": "z-ai/glm-5.1",
+            "name": "z-ai/glm-5.1 (freebuff)",
+            "api": "openai-completions",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 8192
+          }
+        ]
+      },
+      "umans2api": {
+        "baseUrl": "https://xiaoyi7894-umans2api.hf.space/v1",
+        "apiKey": "xm552297",
+        "api": "openai-completions",
+        "injectNumCtxForOpenAICompat": false,
+        "headers": {
+          "User-Agent": "RikkaHub-Android/2.1.7",
+          "Accept": "text/event-stream",
+          "Content-Type": "application/json; charset=UTF-8"
+        },
+        "models": [
+          {
+            "id": "umans-coder",
+            "name": "umans-coder (umans2api)",
+            "api": "openai-completions",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 8192
+          },
+          {
+            "id": "umans-glm-5.1",
+            "name": "umans-glm-5.1 (umans2api)",
+            "api": "openai-completions",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 8192
+          },
+          {
+            "id": "umans-kimi-k2.5",
+            "name": "umans-kimi-k2.5 (umans2api)",
+            "api": "openai-completions",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 8192
+          }
+        ]
+      },
+      "zai2api": {
+        "baseUrl": "https://xiaoyi7894-zai2api.hf.space/v1",
+        "apiKey": "sk-zai2api",
+        "api": "openai-completions",
+        "injectNumCtxForOpenAICompat": false,
+        "headers": {
+          "User-Agent": "RikkaHub-Android/2.1.7",
+          "Accept": "text/event-stream",
+          "Content-Type": "application/json; charset=UTF-8"
+        },
+        "models": [
+          {
+            "id": "glm-5.1",
+            "name": "glm-5.1 (zai2api)",
+            "api": "openai-completions",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 8192
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "grok2api/grok-4.20-beta",
+        "fallbacks": []
+      },
+      "models": {},
+      "contextPruning": {
+        "mode": "cache-ttl",
+        "ttl": "10m",
+        "keepLastAssistants": 2,
+        "minPrunableToolChars": 20000
+      },
+      "compaction": {
+        "mode": "default",
+        "reserveTokensFloor": 10000,
+        "model": "sub2api/claude-opus-4-6",
+        "memoryFlush": {
+          "enabled": true
+        }
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "workspace": "/root/.openclaw/workspace-main",
+        "agentDir": "/root/.openclaw/agents/main",
+        "model": "sub2api/gpt-5.4",
+        "subagents": {
+          "allowAgents": [
+            "tech"
+          ]
+        }
+      },
+      {
+        "id": "tech",
+        "workspace": "/root/.openclaw/workspace-tech",
+        "agentDir": "/root/.openclaw/agents/tech",
+        "model": "umans2api/umans-glm-5.1",
+        "tools": {
+          "deny": [
+            "browser",
+            "nodes"
+          ]
+        }
+      }
+    ]
+  },
+  "tools": {
+    "profile": "full",
+    "alsoAllow": [
+      "group:plugins"
+    ],
+    "deny": [
+      "ws_fetch"
+    ],
+    "web": {
+      "search": {
+        "enabled": false
+      },
+      "fetch": {
+        "enabled": false
+      }
+    },
+    "sessions": {
+      "visibility": "all"
+    },
+    "agentToAgent": {
+      "enabled": true,
+      "allow": [
+        "main",
+        "tech"
+      ]
+    }
+  },
+  "bindings": [
+    {
+      "agentId": "main",
+      "match": {
+        "channel": "telegram",
+        "accountId": "main"
+      }
+    },
+    {
+      "agentId": "tech",
+      "match": {
+        "channel": "telegram",
+        "accountId": "tech"
+      }
+    }
+  ],
+  "messages": {
+    "ackReaction": "👀",
+    "ackReactionScope": "all"
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerDisplay": "raw"
+  },
+  "session": {
+    "dmScope": "main"
+  },
+  "hooks": {
+    "internal": {
+      "enabled": true,
+      "entries": {
+        "boot-md": {
+          "enabled": false
+        },
+        "gateway-startup": {
+          "enabled": true,
+          "delivery": {
+            "mode": "announce",
+            "channel": "telegram",
+            "to": "-1003811040147"
+          }
+        },
+        "audio-transcribe": {
+          "enabled": true
+        },
+        "worker-report-forward": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "pairing",
+      "allowFrom": [
+        "7387265533"
+      ],
+      "groupPolicy": "allowlist",
+      "streaming": "partial",
+      "blockStreaming": false,
+      "accounts": {
+        "main": {
+          "dmPolicy": "pairing",
+          "botToken": "7782089550:AAEUqhMiqcPdZJ4vzhfWGLGG3yBuQyl-Lgs",
+          "groups": {
+            "-1003811040147": {
+              "requireMention": false,
+              "allowFrom": [
+                "7387265533"
+              ]
+            }
+          },
+          "groupPolicy": "allowlist",
+          "streaming": "partial"
+        },
+        "tech": {
+          "dmPolicy": "pairing",
+          "botToken": "8786022790:AAHgJ0bnuLmJkJc_RZrUYYyWIxs1hXml7QI",
+          "allowFrom": [
+            "7387265533"
+          ],
+          "groupPolicy": "allowlist",
+          "streaming": "partial"
+        }
+      }
+    }
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "loopback",
+    "controlUi": {
+      "allowedOrigins": [
+        "*"
+      ]
+    },
+    "auth": {
+      "mode": "token",
+      "token": "b7b8f3350026275d94b8924294518ba135e5e87937375482"
+    }
+  },
+  "memory": {
+    "backend": "qmd",
+    "citations": "auto",
+    "qmd": {
+      "command": "/root/.bun/bin/qmd",
+      "searchMode": "search",
+      "includeDefaultMemory": true,
+      "sessions": {
+        "enabled": true,
+        "retentionDays": 30
+      },
+      "update": {
+        "interval": "5m",
+        "debounceMs": 15000,
+        "onBoot": true,
+        "waitForBootSync": false
+      },
+      "limits": {
+        "maxResults": 8,
+        "timeoutMs": 5000
+      },
+      "scope": {
+        "default": "deny",
+        "rules": [
+          {
+            "action": "allow",
+            "match": {
+              "chatType": "direct"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "plugins": {
+    "allow": [
+      "telegram",
+      "oc-images",
+      "oc-qqmusic"
+    ],
+    "entries": {
+      "oc-images": {
+        "enabled": true
+      },
+      "oc-qqmusic": {
+        "enabled": true
+      }
+    },
+    "installs": {}
+  }
+}
