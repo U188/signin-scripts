@@ -322,7 +322,7 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "grok2api/grok-4.20-beta",
+        "primary": "sub2api/gpt-5.4",
         "fallbacks": []
       },
       "models": {},
@@ -335,7 +335,7 @@
       "compaction": {
         "mode": "default",
         "reserveTokensFloor": 10000,
-        "model": "sub2api/claude-opus-4-6",
+        "model": "sub2api/gpt-5.4",
         "memoryFlush": {
           "enabled": true
         }
