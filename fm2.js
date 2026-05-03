@@ -31,7 +31,7 @@ hostname = appv3.filmix.com.cn
 
 let obj = JSON.parse($response.body);
 
-obj.extra_data.current_vip_level= 5;
+obj.extra_data.current_vip_level = 5;
 
 
 $done({body: JSON.stringify(obj)});
