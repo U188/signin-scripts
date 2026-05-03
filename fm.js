@@ -12,7 +12,7 @@
 *******************************
 [rewrite_local]
 # > filmix-ai影视库重命名整理刮削
-^https:\/\/appv3\.filmix\.com\.cn\/api\/v2\/user\/user\/info url script-response-body https://raw.githubusercontent.com/U188//main/fm.js
+^https:\/\/appv3\.filmix\.com\.cn\/api\/v2\/user\/user\/info url script-response-body https://raw.githubusercontent.com/U188/signin-scripts/refs/heads/master/fm.js
 
 [mitm]
 hostname = appv3.filmix.com.cn
