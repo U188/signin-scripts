@@ -30,7 +30,8 @@ hostname = appv3.filmix.com.cn
 
 
 let obj = JSON.parse($response.body);
-
+obj.code = "0";
+obj.message = "success";
 obj.extra_data.current_vip_level = 5;
 
 
