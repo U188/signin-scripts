@@ -9,64 +9,103 @@ import sys
 import asyncio
 import subprocess
 import time
+import traceback
+import urllib.parse
+import urllib.request
 from datetime import datetime
 
-USERNAME = os.environ.get("NODELOC_USERNAME", "u1888")
-PASSWORD = os.environ.get("NODELOC_PASSWORD", "WOWlove123!")
+USERNAME = os.environ.get("NODELOC_USERNAME", "")
+PASSWORD = os.environ.get("NODELOC_PASSWORD", "")
 CDP_URL = os.environ.get("CDP_URL", "http://127.0.0.1:18800")
 CHROME_BIN = os.environ.get("CHROME_BIN", "/usr/bin/google-chrome")
 CHROME_USER_DATA_DIR = os.environ.get("CHROME_USER_DATA_DIR", "/root/.openclaw/browser/openclaw/user-data")
 FALLBACK_USER_DATA_DIR = os.environ.get("NODELOC_FALLBACK_USER_DATA_DIR", "/root/.config/nodeloc-cdp")
+TELEGRAM_BOT_TOKEN = os.environ.get("SIGNIN_TG_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("SIGNIN_TG_CHAT_ID", "")
+
+def send_telegram(text):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    try:
+        data = urllib.parse.urlencode({"chat_id": TELEGRAM_CHAT_ID, "text": text}).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            data=data,
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=20).read()
+    except Exception as e:
+        print(f"[notify] Telegram 发送失败: {e}", file=sys.stderr)
+
 
 def ensure_cdp_chrome():
     """确保 18800 上有可连接的 Chrome CDP；没有就临时启动一个。"""
     from urllib.parse import urlparse
     import socket
+    from pathlib import Path
 
     parsed = urlparse(CDP_URL)
     host = parsed.hostname or "127.0.0.1"
     port = parsed.port or 18800
+    wait_rounds = int(os.environ.get("NODELOC_CDP_WAIT_ROUNDS", "60"))
+    wait_interval = float(os.environ.get("NODELOC_CDP_WAIT_INTERVAL", "0.5"))
 
-    sock = socket.socket()
-    sock.settimeout(2)
-    try:
-        if sock.connect_ex((host, port)) == 0:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] CDP 已在线：{host}:{port}")
-            return None
-    finally:
-        sock.close()
-
-    user_data_dir = CHROME_USER_DATA_DIR
-    cmd = [
-        CHROME_BIN,
-        f"--remote-debugging-port={port}",
-        f"--user-data-dir={user_data_dir}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-gpu",
-        "--no-sandbox",
-        "--disable-dev-shm-usage",
-        "about:blank",
-    ]
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] CDP 未在线，启动临时 Chrome: {' '.join(cmd)}")
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    for _ in range(20):
+    def port_open():
         sock = socket.socket()
         sock.settimeout(2)
         try:
-            if sock.connect_ex((host, port)) == 0:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] 临时 Chrome 已启动：{host}:{port}")
-                return proc
+            return sock.connect_ex((host, port)) == 0
         finally:
             sock.close()
-        time.sleep(0.5)
 
-    try:
-        proc.kill()
-    except Exception:
-        pass
-    raise RuntimeError(f"无法启动 Chrome CDP：{host}:{port}")
+    if port_open():
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] CDP 已在线：{host}:{port}")
+        return None
+
+    log_path = Path(f"/tmp/nodeloc-chrome-{port}.log")
+    last_errors = []
+    for user_data_dir in [CHROME_USER_DATA_DIR, FALLBACK_USER_DATA_DIR]:
+        Path(user_data_dir).mkdir(parents=True, exist_ok=True)
+        cmd = [
+            CHROME_BIN,
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={user_data_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "about:blank",
+        ]
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] CDP 未在线，启动临时 Chrome: {' '.join(cmd)}")
+        with open(log_path, 'ab') as logf:
+            proc = subprocess.Popen(cmd, stdout=logf, stderr=logf)
+
+        for _ in range(wait_rounds):
+            if port_open():
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] 临时 Chrome 已启动：{host}:{port}，user-data-dir={user_data_dir}")
+                return proc
+            rc = proc.poll()
+            if rc is not None:
+                break
+            time.sleep(wait_interval)
+
+        rc = proc.poll()
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+        tail = ''
+        try:
+            tail = log_path.read_text(errors='ignore')[-1200:]
+        except Exception:
+            pass
+        summary = f'user-data-dir={user_data_dir}, rc={rc}, log_tail={tail.strip() or "<empty>"}'
+        last_errors.append(summary)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Chrome 启动失败，尝试下一个 user-data-dir")
+
+    raise RuntimeError(f"无法启动 Chrome CDP：{host}:{port}；" + " | ".join(last_errors))
 
 async def signin():
     from patchright.async_api import async_playwright
@@ -162,13 +201,49 @@ async def signin():
                 except Exception:
                     pass
 
-if __name__ == "__main__":
-    result = asyncio.run(signin())
-    print(f"\nNodeLoc 签到战报")
-    print(f"时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    if result == "success":
-        print("状态：✅ 签到成功")
+def format_report(result=None, error=None):
+    lines = ["NodeLoc 自动签到", ""]
+    if error:
+        lines.append("执行结果：❌ 执行失败")
+        lines.append("")
+        lines.append("结果明细：")
+        lines.append(f"• ❌ 失败原因：{str(error)[:500]}")
+    elif result == "success":
+        lines.append("执行结果：✅ 签到完成")
+        lines.append("")
+        lines.append("结果明细：")
+        lines.append("• ✅ 签到按钮已完成提交")
     elif result == "already":
-        print("状态：ℹ️  今日已签到")
+        lines.append("执行结果：ℹ️ 今日已签到")
+        lines.append("")
+        lines.append("结果明细：")
+        lines.append("• ✅ 今天已经签过到了")
     else:
-        print("状态：⚠️  未知")
+        lines.append("执行结果：⚠️ 结果待确认")
+        lines.append("")
+        lines.append("结果明细：")
+        lines.append("• ⚠️ 签到状态未知，请手动确认")
+    lines.append("")
+    lines.append(f"执行时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    try:
+        result = asyncio.run(signin())
+        report = format_report(result=result)
+        print("\n" + report)
+        send_telegram(report)
+    except SystemExit as e:
+        code = int(e.code or 0) if isinstance(e.code, int) else 1
+        if code != 0:
+            report = format_report(error=f"脚本提前退出，exit={code}")
+            print("\n" + report)
+            send_telegram(report)
+        raise
+    except Exception as e:
+        report = format_report(error=f"{type(e).__name__}: {e}")
+        print("\n" + report)
+        print(traceback.format_exc())
+        send_telegram(report)
+        sys.exit(1)

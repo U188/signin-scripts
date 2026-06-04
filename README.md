@@ -1,120 +1,88 @@
 # signin-scripts
 
-签到脚本集合。
+三个站点的自动签到脚本：HOHAI、NodeLoc、NodeSeek。
 
-## 脚本列表
-- `hohai-sb.py`：HOHAI 自动签到（Python + SeleniumBase）
-- `nodeloc_signin.py`：NodeLoc 自动签到（Python + Patchright）
-- `nodeseek_signin.mjs`：NodeSeek 自动签到（Node.js + Chrome CDP）
+> 说明：仓库中的脚本已脱敏，账号、密码和 Telegram Bot 信息均通过环境变量传入。
 
-## 设计原则
-- 仓库内保存的是完整脚本本体
-- 调度层（如 cron）只负责定时调用脚本，不负责决定脚本策略
-- 每个脚本都应自行决定默认执行链路、输出格式、失败提示
+## 文件
 
----
+| 文件 | 站点 | 运行时 |
+|---|---|---|
+| `hohai-sb.py` | HOHAI | Python + SeleniumBase |
+| `nodeloc-signin.py` | NodeLoc | Python + patchright |
+| `nodeseek-signin.mjs` | NodeSeek | Node.js + Chrome CDP |
 
-## HOHAI
+## 环境变量
 
-### 文件
-- `hohai-sb.py`
-
-### 依赖
-- Python 3
-- `seleniumbase`
-- Chrome / Chromium
-- 可复用的持久用户目录
-
-### 默认行为
-- 脚本本体默认使用可见浏览器模式
-- 复用持久 profile
-- 遇到 Turnstile 时会等待验证弹窗稳定后再点，并在最终刷新页面确认签到状态
-
-### 可选环境变量
-- `HOHAI_USERNAME`
-- `HOHAI_PASSWORD`
-- `HOHAI_SB_PROFILE`
-- `HOHAI_HEADED`
-
-### 运行示例
-```bash
-python3 hohai-sb.py
-```
-
----
-
-## NodeLoc
-
-### 文件
-- `nodeloc_signin.py`
-
-### 依赖
-- Python 3
-- `patchright`
-- Chrome / Chromium
-- 可连接的 Chrome CDP（默认 `127.0.0.1:18800`）
-
-### 默认行为
-- 先检查 `127.0.0.1:18800` 是否已有可用 CDP
-- 没有时，脚本会自行拉起临时 Chrome
-- 自动登录、检查签到状态、点击签到并输出最终结果
-
-### 可选环境变量
-- `NODELOC_USERNAME`
-- `NODELOC_PASSWORD`
-- `CDP_URL`
-- `CHROME_BIN`
-- `CHROME_USER_DATA_DIR`
-- `NODELOC_FALLBACK_USER_DATA_DIR`
-
-### 运行示例
-```bash
-python3 nodeloc_signin.py
-```
-
----
-
-## NodeSeek
-
-### 文件
-- `nodeseek_signin.mjs`
-
-### 依赖
-- Node.js 18+
-- Chrome / Chromium
-- 可连接的 Chrome CDP HTTP 端点（默认 `http://127.0.0.1:18800`）
-- 如果本机装了 OpenClaw，可由脚本尝试调用 `openclaw browser start` 启动浏览器
-
-### 默认行为
-- 先检查 CDP 是否可用
-- 如果配置了 OpenClaw，可尝试调用 `openclaw browser start`
-- 通过 CDP 打开 NodeSeek 页面、判断登录态、执行签到、尝试“试试手气”、提取鸡腿和排名
-- 输出适合 cron / 通知脚本消费的文本结果
-
-### 可选环境变量
-- `OPENCLAW_BIN`
-- `OPENCLAW_CDP_HTTP`
-
-### 当前限制
-- 脚本依赖本机存在可连接的 Chrome CDP 环境
-- 如果没有 OpenClaw，也没有预先启动的 CDP Chrome，则无法直接运行
-- 这时需要先手动启动带远程调试端口的 Chrome，例如：
+### 通用 Telegram 通知
 
 ```bash
-google-chrome \
-  --remote-debugging-port=18800 \
-  --user-data-dir=/path/to/chrome-profile \
-  --no-first-run \
-  --no-default-browser-check
+export SIGNIN_TG_BOT_TOKEN='你的 Telegram Bot Token'
+export SIGNIN_TG_CHAT_ID='你的 Telegram Chat ID'
 ```
 
-### 运行示例
+如果不设置这两个变量，脚本仍会在终端输出结果，但不会发送 Telegram 通知。
+
+### HOHAI
+
 ```bash
-node nodeseek_signin.mjs
+export HOHAI_USERNAME='你的 HOHAI 用户名'
+export HOHAI_PASSWORD='你的 HOHAI 密码'
+export HOHAI_SB_PROFILE='/root/.config/seleniumbase-hohai'
 ```
 
-### 输出约定
-- 成功签到：输出 `[签到成功] NodeSeek`
-- 今日已签：输出 `[重复签到] NodeSeek`
-- 登录阻塞 / 验证阻塞：输出 `[执行受阻] NodeSeek`
-- 脚本异常：输出 `[执行失败] NodeSeek`
+运行：
+
+```bash
+/root/.openclaw/venvs/seleniumbase/bin/python hohai-sb.py
+```
+
+### NodeLoc
+
+```bash
+export NODELOC_USERNAME='你的 NodeLoc 用户名'
+export NODELOC_PASSWORD='你的 NodeLoc 密码'
+export CDP_URL='http://127.0.0.1:18800'
+```
+
+运行：
+
+```bash
+python3 nodeloc-signin.py
+```
+
+### NodeSeek
+
+NodeSeek 复用已登录浏览器会话，不在脚本中保存账号密码。
+
+```bash
+export OPENCLAW_CDP_HTTP='http://127.0.0.1:18800'
+```
+
+运行：
+
+```bash
+/usr/local/node/bin/node nodeseek-signin.mjs
+```
+
+## crontab 示例
+
+需要 GUI/Chrome 的环境建议显式传入：
+
+```cron
+35 8,20 * * * DISPLAY=:1 XDG_RUNTIME_DIR=/tmp/runtime-root XAUTHORITY=/root/.Xauthority HOME=/root PATH=/usr/local/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOHAI_USERNAME='xxx' HOHAI_PASSWORD='xxx' SIGNIN_TG_BOT_TOKEN='xxx' SIGNIN_TG_CHAT_ID='xxx' /root/.openclaw/venvs/seleniumbase/bin/python /path/to/hohai-sb.py >> /tmp/hohai-cron.log 2>&1
+
+10 8,20 * * * DISPLAY=:1 XDG_RUNTIME_DIR=/tmp/runtime-root XAUTHORITY=/root/.Xauthority HOME=/root PATH=/usr/local/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin NODELOC_USERNAME='xxx' NODELOC_PASSWORD='xxx' SIGNIN_TG_BOT_TOKEN='xxx' SIGNIN_TG_CHAT_ID='xxx' python3 /path/to/nodeloc-signin.py >> /tmp/nodeloc-cron.log 2>&1
+
+50 8,20 * * * HOME=/root PATH=/usr/local/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin SIGNIN_TG_BOT_TOKEN='xxx' SIGNIN_TG_CHAT_ID='xxx' /usr/local/node/bin/node /path/to/nodeseek-signin.mjs >> /tmp/nodeseek-cron.log 2>&1
+```
+
+## 依赖提示
+
+- HOHAI：需要 SeleniumBase 环境和可用 Chrome。
+- NodeLoc：需要 `patchright` 和可用 Chrome/CDP。
+- NodeSeek：需要 Node.js 运行时支持 `fetch` 和 `WebSocket`，并能访问 Chrome CDP。
+
+## 安全
+
+不要把真实账号、密码、Bot Token、Chat ID 写进公开仓库；请使用环境变量或本机私有配置。

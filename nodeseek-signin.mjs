@@ -10,6 +10,8 @@ const CHROME_USER_DATA_DIR = process.env.CHROME_USER_DATA_DIR || '/root/.opencla
 const FALLBACK_USER_DATA_DIR = process.env.NODESEEK_FALLBACK_USER_DATA_DIR || '/root/.config/nodeseek-cdp';
 const CDP_WAIT_ROUNDS = Number(process.env.NODESEEK_CDP_WAIT_ROUNDS || 60);
 const CDP_WAIT_MS = Number(process.env.NODESEEK_CDP_WAIT_MS || 500);
+const TELEGRAM_BOT_TOKEN = process.env.SIGNIN_TG_BOT_TOKEN || '';
+const TELEGRAM_CHAT_ID = process.env.SIGNIN_TG_CHAT_ID || '';
 const WebSocketImpl = globalThis.WebSocket;
 
 if (!WebSocketImpl) {
@@ -18,6 +20,21 @@ if (!WebSocketImpl) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function sendTelegram(text) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+  try {
+    const body = new URLSearchParams({ chat_id: TELEGRAM_CHAT_ID, text });
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, { method: 'POST', body });
+  } catch (err) {
+    console.error(`[notify] Telegram 发送失败: ${err?.message || err}`);
+  }
+}
+
+async function report(text) {
+  console.log(text);
+  await sendTelegram(text);
 }
 
 async function jsonFetch(url, options = {}) {
@@ -267,11 +284,11 @@ async function main() {
     let boardText = await getBodyText(targetId);
 
     if (hasLoginBlocker(boardText)) {
-      console.log('NodeSeek 自动签到战报\n\n[执行受阻] NodeSeek\n🔐 登录状态: 当前未登录，需要先登录 NodeSeek 账号');
+      await report('NodeSeek 自动签到战报\n\n[执行受阻] NodeSeek\n🔐 登录状态: 当前未登录，需要先登录 NodeSeek 账号');
       return;
     }
     if (hasCaptchaBlocker(boardText)) {
-      console.log('NodeSeek 自动签到战报\n\n[执行受阻] NodeSeek\n🧩 验证阻塞: 出现人机验证，需要你手动完成后我再继续');
+      await report('NodeSeek 自动签到战报\n\n[执行受阻] NodeSeek\n🧩 验证阻塞: 出现人机验证，需要你手动完成后我再继续');
       return;
     }
 
@@ -281,7 +298,7 @@ async function main() {
     if (boardText.includes('今日还未签到')) {
       const signClick = await clickByText(targetId, ['鸡腿 x', '鸡腿x', '鸡腿 ×', '签到']);
       if (!signClick?.clicked) {
-        console.log('NodeSeek 自动签到战报\n\n[执行受阻] NodeSeek\n⚠️ 签到按钮: 检测到今日未签到，但没有找到可点击的签到按钮');
+        await report('NodeSeek 自动签到战报\n\n[执行受阻] NodeSeek\n⚠️ 签到按钮: 检测到今日未签到，但没有找到可点击的签到按钮');
         return;
       }
       claimedThisRun = true;
@@ -333,7 +350,7 @@ async function main() {
       lines.push(`🎲 试试手气: ${tryLuckResult || '已点击，但未抓到明确结果文本'}`);
     }
 
-    console.log(lines.join('\n'));
+    await report(lines.join('\n'));
   } finally {
     await closePage(targetId);
     try { launchedProc?.kill('SIGTERM'); } catch {}
