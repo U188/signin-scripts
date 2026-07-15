@@ -429,11 +429,105 @@ def visible_click_turnstile(sb):
     }
 
 
-def wait_for_login_inputs(sb, timeout=18):
+def page_looks_like_cf_challenge(sb):
+    """粗判 Cloudflare / 加载中页面（输入框尚未出现）。"""
+    try:
+        title = (sb.get_title() or "").lower()
+    except Exception:
+        title = ""
+    try:
+        text = (body_text(sb) or "")[:2000]
+    except Exception:
+        text = ""
+    markers = [
+        "just a moment",
+        "checking your browser",
+        "attention required",
+        "cf-browser-verification",
+        "challenge-platform",
+        "请完成安全验证",
+        "正在验证",
+        "enable javascript and cookies",
+    ]
+    blob = f"{title}\n{text}".lower()
+    return any(m in blob for m in markers)
+
+
+def try_pass_cf_interstitial(sb):
+    """尝试点掉登录前的 CF 挑战（best-effort）。"""
+    actions = []
+    # SeleniumBase UC 原生
+    for name in ("uc_gui_click_cf", "uc_gui_handle_cf", "uc_gui_click_captcha"):
+        fn = getattr(sb, name, None)
+        if callable(fn):
+            try:
+                fn()
+                actions.append(name)
+                sb.sleep(1.2)
+            except Exception as e:
+                actions.append(f"{name}:err:{type(e).__name__}")
+    # 通用 pyautogui 点中间偏左（常见 checkbox 区域）
+    if HEADED:
+        try:
+            import pyautogui
+            # 优先找 challenge iframe 几何
+            rect = None
+            for sel in (
+                'iframe[src*="challenge-platform"]',
+                'iframe[src*="turnstile"]',
+                "#challenge-stage",
+                ".cf-turnstile",
+            ):
+                try:
+                    if sb.is_element_present(sel):
+                        rect = sb.get_gui_element_rect(sel)
+                        if rect and rect.get("width", 0) > 20:
+                            break
+                except Exception:
+                    continue
+            if rect and rect.get("width", 0) > 20:
+                x = int(rect["x"] + min(40, max(12, rect["width"] * 0.15)))
+                y = int(rect["y"] + rect["height"] * 0.5)
+            else:
+                # 屏幕中部偏上
+                x, y = 540, 420
+            pyautogui.moveTo(x, y, duration=0.25)
+            sb.sleep(0.2)
+            pyautogui.click(x=x, y=y)
+            actions.append(f"pyautogui:{x},{y}")
+            sb.sleep(1.5)
+        except Exception as e:
+            actions.append(f"pyautogui:err:{type(e).__name__}")
+    return actions
+
+
+def wait_for_login_inputs(sb, timeout=45):
     deadline = time.time() + timeout
-    last = {"cdp_count": 0, "selenium_count": 0, "js_count": 0, "url": ""}
+    last = {
+        "cdp_count": 0,
+        "selenium_count": 0,
+        "js_count": 0,
+        "url": "",
+        "cf_seen": False,
+        "reloads": 0,
+        "cf_actions": [],
+    }
+    next_cf_try = 0.0
+    next_reload_at = time.time() + 18
     while time.time() < deadline:
         last["url"] = sb.get_current_url()
+        # 已不在登录页（cookie 生效）→ 上层会处理
+        if "/login" not in (last["url"] or ""):
+            last["left_login"] = True
+            return {"mode": None, "inputs": [], "state": last}
+
+        cf_now = page_looks_like_cf_challenge(sb)
+        last["cf_seen"] = last["cf_seen"] or cf_now
+        if cf_now and time.time() >= next_cf_try:
+            acts = try_pass_cf_interstitial(sb)
+            if acts:
+                last["cf_actions"].extend(acts)
+            next_cf_try = time.time() + 4
 
         try:
             inputs = sb.cdp.find_elements("input")
@@ -470,6 +564,16 @@ def wait_for_login_inputs(sb, timeout=18):
                 return {"mode": "js", "inputs": js_inputs, "state": last}
         except Exception as e:
             last["js_error"] = str(e)[:160]
+
+        # 长时间无输入框：刷新一次（最多 2 次）
+        if time.time() >= next_reload_at and last["reloads"] < 2 and last["js_count"] < 2:
+            try:
+                sb.open(LOGIN_URL)
+                last["reloads"] += 1
+                next_reload_at = time.time() + 16
+                sb.sleep(2)
+            except Exception as e:
+                last["reload_error"] = str(e)[:120]
 
         sb.sleep(0.75)
     return {"mode": None, "inputs": [], "state": last}
@@ -631,9 +735,29 @@ def ensure_login(sb):
     if "/login" not in sb.get_current_url():
         return {"skipped": True, "url": sb.get_current_url()}
 
-    login_probe = wait_for_login_inputs(sb, timeout=20)
+    # 首屏可能是 CF interstitial，先多等一会再探测输入框
+    login_timeout = int(os.environ.get("HOHAI_LOGIN_TIMEOUT", "50"))
+    login_probe = wait_for_login_inputs(sb, timeout=login_timeout)
+    if login_probe.get("state", {}).get("left_login"):
+        return {"skipped": True, "url": sb.get_current_url(), "probe": login_probe.get("state")}
     if not login_probe.get("mode"):
-        return {"ok": False, "reason": "登录页输入框不足", "state": login_probe.get("state"), "url": sb.get_current_url()}
+        # 最后再硬刷新一次并短等
+        try:
+            sb.open(LOGIN_URL)
+            sb.sleep(3)
+            login_probe = wait_for_login_inputs(sb, timeout=min(25, login_timeout))
+        except Exception as e:
+            login_probe = {"mode": None, "inputs": [], "state": {"final_open_error": str(e)}}
+        if login_probe.get("state", {}).get("left_login"):
+            return {"skipped": True, "url": sb.get_current_url(), "probe": login_probe.get("state")}
+    if not login_probe.get("mode"):
+        return {
+            "ok": False,
+            "reason": "登录页输入框不足",
+            "state": login_probe.get("state"),
+            "url": sb.get_current_url(),
+            "hint": "可能被 Cloudflare 拦截或代理页面未加载完成",
+        }
     try:
         fill_state = fill_login_inputs(sb, login_probe)
     except Exception as e:
@@ -653,8 +777,18 @@ def ensure_login(sb):
             "state": login_probe.get("state"),
             "url": sb.get_current_url(),
         }
-    sb.sleep(8)
-    return {"ok": True, "fill": fill_state, "clicked": clicked, "url": sb.get_current_url()}
+    # 登录后等跳转 dashboard
+    for _ in range(16):
+        sb.sleep(1)
+        if "/login" not in sb.get_current_url():
+            break
+    return {
+        "ok": True,
+        "fill": fill_state,
+        "clicked": clicked,
+        "url": sb.get_current_url(),
+        "probe": login_probe.get("state"),
+    }
 
 
 def do_checkin_flow(sb, proxy_label):
