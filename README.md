@@ -45,6 +45,7 @@ export HOHAI_PROXY_LIST='user:pass@host1:port,user:pass@host2:port'
 # export HOHAI_HEADED=1
 # export HOHAI_KEEP_OPEN_ON_FAIL=0
 # export HOHAI_OBSERVE_MODE=0
+# export HOHAI_LOGIN_TIMEOUT=50   # 登录页/CF 等待秒数
 export DISPLAY=:1
 ```
 
