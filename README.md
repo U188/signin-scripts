@@ -32,21 +32,24 @@ export SIGNIN_TG_CHAT_ID='你的 Telegram Chat ID'
 export HOHAI_USERNAME='你的 HOHAI 用户名'
 export HOHAI_PASSWORD='你的 HOHAI 密码'
 export HOHAI_SB_PROFILE='/root/.config/seleniumbase-hohai'
-
-# 可选：SOCKS/HTTP 代理（机房 IP 下 Turnstile 常服务端拒签，建议走可用代理）
-# SeleniumBase 格式：user:pass@host:port 或 host:port
-# 也接受 socks5://... / http://...（脚本会自动去掉 scheme）
-export HOHAI_PROXY='user:pass@host:port'
-
-# 可选：多代理按序尝试（逗号/换行分隔），全失败后再试直连
-export HOHAI_PROXY_LIST='user:pass@host1:port,user:pass@host2:port'
-
-# 可选调试
-# export HOHAI_HEADED=1
-# export HOHAI_KEEP_OPEN_ON_FAIL=0
-# export HOHAI_OBSERVE_MODE=0
-# export HOHAI_LOGIN_TIMEOUT=50   # 登录页/CF 等待秒数
 export DISPLAY=:1
+
+# 推荐：每次运行从免费代理 API 动态拉取并测活（默认开启）
+export HOHAI_PROXY_API=1
+# export HOHAI_PROXY_PROTOCOLS=socks5,http
+# export HOHAI_PROXY_PROBE_LIMIT=80      # 每源最多测多少条
+# export HOHAI_PROXY_MAX_ALIVE=8         # 测活后最多保留多少可用代理
+# export HOHAI_PROXY_WORKERS=40
+# export HOHAI_PROXY_TIMEOUT=6
+# export HOHAI_ALLOW_DIRECT=0            # 机房直连 Turnstile 常失败，默认不回落直连
+
+# 可选：静态优先代理（排在 API 测活结果前面）
+# SeleniumBase：user:pass@host:port / host:port / socks5://host:port
+# export HOHAI_PROXY='user:pass@host:port'
+# export HOHAI_PROXY_LIST='host1:port,socks5://host2:port'
+
+# 可选：自定义代理 API 源（| 或换行分隔）
+# export HOHAI_PROXY_API_URLS='https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5|https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt'
 ```
 
 运行：
@@ -62,7 +65,7 @@ export DISPLAY=:1
 # /root/.config/hohai-signin.env
 # HOHAI_USERNAME=...
 # HOHAI_PASSWORD=...
-# HOHAI_PROXY=user:pass@host:port
+# HOHAI_PROXY_API=1
 # DISPLAY=:1
 # SIGNIN_TG_BOT_TOKEN=...
 # SIGNIN_TG_CHAT_ID=...
@@ -70,7 +73,10 @@ export DISPLAY=:1
 ./run-hohai-signin.sh
 ```
 
+流程：拉取免费代理 API → 并发测活（必须同时通 HOHAI 与 `challenges.cloudflare.com`）→ 按可用代理依次签到。  
 成功判定以 `POST /api/checkin` 响应为准；验证失败会自动重开签到弹窗再试。
+
+默认代理源：ProxyScrape、Proxifly、TheSpeedX、monosans、hookzof、Geonode。
 
 ### NodeLoc
 

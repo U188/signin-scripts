@@ -4,9 +4,16 @@
 
 环境变量：
   HOHAI_USERNAME / HOHAI_PASSWORD   必填
-  HOHAI_PROXY                       可选，SeleniumBase 格式 user:pass@host:port 或 host:port
-                                    也接受 socks5://... 会自动去掉 scheme
-  HOHAI_PROXY_LIST                  可选，逗号/换行分隔多代理，按序尝试直到 checkin 成功
+  HOHAI_PROXY                       可选静态代理：user:pass@host:port / host:port / socks5://host:port
+  HOHAI_PROXY_LIST                  可选静态多代理（逗号/换行），优先于 API 拉取结果之前插入
+  HOHAI_PROXY_API                   默认 1：从免费代理 API 动态拉取并测活
+  HOHAI_PROXY_API_URLS              可选，| 或换行分隔的自定义 API URL（覆盖默认源）
+  HOHAI_PROXY_PROTOCOLS             默认 socks5,http（测活顺序）
+  HOHAI_PROXY_PROBE_LIMIT           每个源最多测多少条，默认 120
+  HOHAI_PROXY_MAX_ALIVE             测活后最多保留多少可用代理，默认 12
+  HOHAI_PROXY_WORKERS               测活并发，默认 40
+  HOHAI_PROXY_TIMEOUT               单代理测活超时秒，默认 6
+  HOHAI_ALLOW_DIRECT                默认 0：免费代理全失败时是否回落直连（机房 IP 易被 Turnstile 拒）
   HOHAI_SB_PROFILE                  浏览器 profile 目录
   HOHAI_HEADED                      默认 1
   HOHAI_KEEP_OPEN_ON_FAIL           失败时是否保留浏览器
@@ -15,6 +22,7 @@
   SIGNIN_TG_BOT_TOKEN / SIGNIN_TG_CHAT_ID  通知（也兼容 TELEGRAM_BOT_TOKEN / TELEGRAM_ALLOWED_USERS）
 """
 
+import concurrent.futures
 import json
 import os
 import random
@@ -65,19 +73,302 @@ GUI_TARGET_SELECTORS = [
 ]
 
 
-def normalize_proxy(raw):
-    """SeleniumBase 要 user:pass@host:port 或 host:port，不要 scheme。"""
+
+DEFAULT_PROXY_API_SOURCES = [
+    # ProxyScrape free public API
+    ("proxyscrape_socks5", "socks5", "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000&country=all"),
+    ("proxyscrape_http", "http", "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=8000&country=all"),
+    # Proxifly GitHub mirror
+    ("proxifly_socks5", "socks5", "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt"),
+    ("proxifly_http", "http", "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt"),
+    # GitHub raw lists
+    ("speedx_socks5", "socks5", "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt"),
+    ("monosans_socks5", "socks5", "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt"),
+    ("hookzof_socks5", "socks5", "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt"),
+    # Geonode JSON
+    ("geonode_socks5", "socks5", "https://proxylist.geonode.com/api/proxy-list?limit=200&page=1&sort_by=lastChecked&sort_type=desc&protocols=socks5"),
+]
+
+
+def env_bool(name, default=False):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on", "y")
+
+
+def env_int(name, default):
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return int(str(raw).strip())
+    except Exception:
+        return default
+
+
+def detect_proxy_scheme(raw):
+    p = (raw or "").strip().lower()
+    if p.startswith("socks5h://"):
+        return "socks5h"
+    if p.startswith("socks5://"):
+        return "socks5"
+    if p.startswith("socks4://"):
+        return "socks4"
+    if p.startswith("https://"):
+        return "https"
+    if p.startswith("http://"):
+        return "http"
+    return None
+
+
+def normalize_proxy(raw, default_scheme=None):
+    """Return SeleniumBase-ready proxy string.
+
+    - bare host:port → keep bare (Chrome defaults to HTTP) unless default_scheme given
+    - socks5://host:port → keep scheme (required for free SOCKS lists)
+    - user:pass@host:port → keep as-is
+    """
     if not raw:
         return None
     p = raw.strip()
-    for prefix in ("socks5h://", "socks5://", "http://", "https://"):
-        if p.lower().startswith(prefix):
-            p = p[len(prefix) :]
-            break
-    return p or None
+    scheme = detect_proxy_scheme(p)
+    if scheme:
+        body = p.split("://", 1)[1]
+    else:
+        body = p
+        scheme = default_scheme
+    body = body.strip()
+    if not body:
+        return None
+    # strip leftover scheme fragments
+    if "://" in body:
+        body = body.split("://", 1)[1]
+    # validate host:port shape roughly
+    hostport = body.split("@")[-1]
+    if not re.match(r"^[\w.\[\]:-]+:\d+$", hostport):
+        # allow host names / ipv6-ish loosely; if no port, reject
+        if ":" not in hostport:
+            return None
+    if scheme in ("socks5", "socks5h", "socks4"):
+        # SeleniumBase/Chrome: socks5://host:port  (auth rare for free lists)
+        if "@" in body:
+            # user:pass@host:port with socks — keep scheme
+            return f"{scheme}://{body}"
+        return f"{scheme}://{body}"
+    if scheme in ("http", "https"):
+        # SB auth form prefers user:pass@host:port without scheme
+        return body
+    # unknown / bare
+    return body
 
 
-def proxy_list_from_env():
+def proxy_label(proxy):
+    return proxy or "direct"
+
+
+def parse_proxy_candidates(text, default_scheme="socks5"):
+    """Extract host:port candidates from plain/json/html-ish text."""
+    if not text:
+        return []
+    items = []
+    # JSON Geonode-like
+    if '"ip"' in text and '"port"' in text:
+        try:
+            data = json.loads(text)
+            rows = data.get("data") if isinstance(data, dict) else data
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    ip = str(row.get("ip") or row.get("host") or "").strip()
+                    port = str(row.get("port") or "").strip()
+                    if ip and port.isdigit():
+                        items.append((default_scheme, f"{ip}:{port}"))
+        except Exception:
+            pass
+    # generic host:port
+    for ip, port in re.findall(r"(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})", text):
+        items.append((default_scheme, f"{ip}:{port}"))
+    # scheme-prefixed
+    for scheme, hostport in re.findall(r"(socks5h?|socks4|https?)://([\w.\[\]:-]+:\d+)", text, flags=re.I):
+        items.append((scheme.lower().replace("socks5h", "socks5"), hostport))
+    # dedupe preserve order
+    seen = set()
+    out = []
+    for scheme, hostport in items:
+        key = (scheme, hostport)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((scheme, hostport))
+    return out
+
+
+def http_get_text(url, timeout=20):
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) HOHAI-Signin/1.0",
+            "Accept": "*/*",
+        },
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", "ignore")
+
+
+def fetch_proxy_api_sources():
+    custom = os.environ.get("HOHAI_PROXY_API_URLS", "").strip()
+    if custom:
+        sources = []
+        for i, part in enumerate(re.split(r"[\n|]+", custom)):
+            url = part.strip()
+            if not url:
+                continue
+            # infer protocol from url keywords
+            low = url.lower()
+            scheme = "socks5" if "socks5" in low or "socks" in low else "http"
+            sources.append((f"custom_{i+1}", scheme, url))
+        return sources
+    # filter by HOHAI_PROXY_PROTOCOLS
+    wanted = {x.strip().lower() for x in re.split(r"[,;\s]+", os.environ.get("HOHAI_PROXY_PROTOCOLS", "socks5,http")) if x.strip()}
+    if not wanted:
+        wanted = {"socks5", "http"}
+    out = []
+    for name, scheme, url in DEFAULT_PROXY_API_SOURCES:
+        if scheme in wanted or (scheme == "socks5" and "socks5" in wanted):
+            out.append((name, scheme, url))
+    return out
+
+
+def fetch_proxies_from_apis(limit_per_source=120):
+    sources = fetch_proxy_api_sources()
+    collected = []
+    stats = []
+    for name, scheme, url in sources:
+        try:
+            body = http_get_text(url, timeout=20)
+            cands = parse_proxy_candidates(body, default_scheme=scheme)[: max(1, limit_per_source)]
+            stats.append({"source": name, "ok": True, "count": len(cands), "url": url[:120]})
+            for sch, hostport in cands:
+                collected.append((sch, hostport, name))
+        except Exception as e:
+            stats.append({"source": name, "ok": False, "error": f"{type(e).__name__}: {e}", "url": url[:120]})
+    print(json.dumps({"event": "proxy_api_fetch", "sources": stats, "total_raw": len(collected)}, ensure_ascii=False))
+    # dedupe by scheme+hostport
+    seen = set()
+    uniq = []
+    for sch, hostport, src in collected:
+        key = (sch, hostport)
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append((sch, hostport, src))
+    return uniq
+
+
+def _curl_code(proxy_url, target_url, timeout):
+    try:
+        # local curl binary; avoid shell
+        import subprocess
+
+        r = subprocess.run(
+            [
+                "curl",
+                "-sS",
+                "-m",
+                str(timeout),
+                "-x",
+                proxy_url,
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "--max-redirs",
+                "3",
+                "-L",
+                target_url,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 3,
+        )
+        return (r.stdout or "").strip()
+    except Exception:
+        return "000"
+
+
+def probe_one_proxy(scheme, hostport, source, timeout=6):
+    if scheme.startswith("socks"):
+        proxy_url = f"socks5h://{hostport}"
+        sb_proxy = normalize_proxy(hostport, default_scheme="socks5")
+    else:
+        proxy_url = f"http://{hostport}"
+        sb_proxy = normalize_proxy(hostport, default_scheme="http")
+
+    # Require BOTH hohai site and Cloudflare challenges (Turnstile path)
+    hohai = _curl_code(proxy_url, BASE + "/", timeout)
+    if hohai != "200":
+        return None
+    cf = _curl_code(proxy_url, "https://challenges.cloudflare.com/", timeout)
+    if cf != "200":
+        return None
+    # optional ip check (not required)
+    ip_code = _curl_code(proxy_url, "https://api.ipify.org", timeout)
+    return {
+        "proxy": sb_proxy,
+        "hostport": hostport,
+        "scheme": scheme,
+        "source": source,
+        "hohai": hohai,
+        "cf": cf,
+        "ip": ip_code,
+    }
+
+
+def probe_proxies(candidates, max_alive=12, workers=40, timeout=6):
+    if not candidates:
+        return []
+    alive = []
+    t0 = time.time()
+    # Prefer socks5 first in candidate order
+    candidates = sorted(candidates, key=lambda x: 0 if str(x[0]).startswith("socks") else 1)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(4, workers)) as ex:
+        futs = {
+            ex.submit(probe_one_proxy, sch, hostport, src, timeout): (sch, hostport, src)
+            for sch, hostport, src in candidates
+        }
+        for fut in concurrent.futures.as_completed(futs):
+            try:
+                row = fut.result()
+            except Exception:
+                row = None
+            if not row:
+                continue
+            alive.append(row)
+            print(json.dumps({"event": "proxy_alive", **row}, ensure_ascii=False))
+            if len(alive) >= max_alive:
+                # cancel remaining
+                for f in futs:
+                    f.cancel()
+                break
+    print(
+        json.dumps(
+            {
+                "event": "proxy_probe_done",
+                "alive": len(alive),
+                "probed_pool": len(candidates),
+                "elapsed_s": round(time.time() - t0, 1),
+                "proxies": [a["proxy"] for a in alive],
+            },
+            ensure_ascii=False,
+        )
+    )
+    return alive
+
+
+def static_proxies_from_env():
     items = []
     single = normalize_proxy(os.environ.get("HOHAI_PROXY", ""))
     if single:
@@ -87,10 +378,57 @@ def proxy_list_from_env():
         n = normalize_proxy(part)
         if n and n not in items:
             items.append(n)
-    # 最后尝试直连
-    if None not in items:
-        items.append(None)
-    return items or [None]
+    return items
+
+
+def build_proxy_queue():
+    """Build ordered proxy queue for sign-in attempts.
+
+    Order:
+      1) static HOHAI_PROXY / HOHAI_PROXY_LIST (if set)
+      2) dynamically fetched + probed free proxies (if HOHAI_PROXY_API=1)
+      3) optional direct (HOHAI_ALLOW_DIRECT=1)
+    """
+    queue = []
+    for p in static_proxies_from_env():
+        if p not in queue:
+            queue.append(p)
+
+    use_api = env_bool("HOHAI_PROXY_API", True)
+    if use_api:
+        limit = env_int("HOHAI_PROXY_PROBE_LIMIT", 120)
+        max_alive = env_int("HOHAI_PROXY_MAX_ALIVE", 12)
+        workers = env_int("HOHAI_PROXY_WORKERS", 40)
+        timeout = env_int("HOHAI_PROXY_TIMEOUT", 6)
+        try:
+            cands = fetch_proxies_from_apis(limit_per_source=limit)
+            # cap total probe pool to keep runtime bounded
+            max_pool = env_int("HOHAI_PROXY_POOL_MAX", 250)
+            cands = cands[:max_pool]
+            alive = probe_proxies(cands, max_alive=max_alive, workers=workers, timeout=timeout)
+            for row in alive:
+                p = row.get("proxy")
+                if p and p not in queue:
+                    queue.append(p)
+        except Exception as e:
+            print(json.dumps({"event": "proxy_api_error", "error": f"{type(e).__name__}: {e}"}, ensure_ascii=False))
+
+    allow_direct = env_bool("HOHAI_ALLOW_DIRECT", False)
+    if allow_direct and None not in queue:
+        queue.append(None)
+
+    if not queue:
+        # last resort: still try direct so script produces a clear Turnstile failure report
+        print(json.dumps({"event": "proxy_queue_empty_fallback_direct"}, ensure_ascii=False))
+        queue.append(None)
+
+    print(json.dumps({"event": "proxy_queue", "count": len(queue), "items": [proxy_label(p) for p in queue]}, ensure_ascii=False))
+    return queue
+
+
+def proxy_list_from_env():
+    """Backward-compatible name used by main(). """
+    return build_proxy_queue()
 
 
 def send_telegram(text):
@@ -1000,6 +1338,7 @@ def main():
     proxies = proxy_list_from_env()
     attempts = []
     last_fail = ("未执行", {})
+    print(json.dumps({"event": "begin", "proxy_count": len(proxies), "api": env_bool("HOHAI_PROXY_API", True)}, ensure_ascii=False))
 
     for proxy in proxies:
         try:
