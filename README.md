@@ -20,8 +20,8 @@
 ### 通用 Telegram 通知
 
 ```bash
-export SIGNIN_TG_BOT_TOKEN='你的 Telegram Bot Token'
-export SIGNIN_TG_CHAT_ID='你的 Telegram Chat ID'
+export SIGNIN_TG_BOT_TOKEN='YOUR_TELEGRAM_BOT_TOKEN'
+export SIGNIN_TG_CHAT_ID='YOUR_TELEGRAM_CHAT_ID'
 ```
 
 如果不设置这两个变量，脚本仍会在终端输出结果，但不会发送 Telegram 通知。
@@ -31,8 +31,8 @@ export SIGNIN_TG_CHAT_ID='你的 Telegram Chat ID'
 ### HOHAI
 
 ```bash
-export HOHAI_USERNAME='你的 HOHAI 用户名'
-export HOHAI_PASSWORD='你的 HOHAI 密码'
+export HOHAI_USERNAME='YOUR_HOHAI_USERNAME'
+export HOHAI_PASSWORD='YOUR_HOHAI_PASSWORD'
 export HOHAI_SB_PROFILE='/root/.config/seleniumbase-hohai'
 export DISPLAY=:1
 
@@ -88,8 +88,8 @@ export HOHAI_PROXY_API=1
 ### VPS8（vps8.zz.cd）
 
 ```bash
-export NODELOC_USERNAME='你的 NodeLoc 用户名'
-export NODELOC_PASSWORD='你的 NodeLoc 密码'
+export NODELOC_USERNAME='YOUR_NODELOC_USERNAME'
+export NODELOC_PASSWORD='YOUR_NODELOC_PASSWORD'
 export VPS8_BASE='https://vps8.zz.cd'
 export VPS8_SB_PROFILE='/root/.config/seleniumbase-vps8'
 export DISPLAY=:1
@@ -132,8 +132,8 @@ hermes cron create '5 8 * * *' \
 ### NodeLoc
 
 ```bash
-export NODELOC_USERNAME='你的 NodeLoc 用户名'
-export NODELOC_PASSWORD=*** NodeLoc 密码'
+export NODELOC_USERNAME='YOUR_NODELOC_USERNAME'
+export NODELOC_PASSWORD='YOUR_NODELOC_PASSWORD'
 export CDP_URL='http://127.0.0.1:18800'
 ```
 
