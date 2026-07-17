@@ -133,7 +133,7 @@ hermes cron create '5 8 * * *' \
 
 ```bash
 export NODELOC_USERNAME='你的 NodeLoc 用户名'
-export NODELOC_PASSWORD='你的 NodeLoc 密码'
+export NODELOC_PASSWORD=*** NodeLoc 密码'
 export CDP_URL='http://127.0.0.1:18800'
 ```
 
