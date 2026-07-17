@@ -95,7 +95,7 @@ export VPS8_SB_PROFILE='/root/.config/seleniumbase-vps8'
 export DISPLAY=:1
 
 # reCAPTCHA v2 图片题需要打码（否则 exit 3）
-# export YESCAPTCHA_API_KEY='你的 YesCaptcha clientKey'
+# export YESCAPTCHA_API_KEY='YOUR_YESCAPTCHA_CLIENT_KEY'
 # export YESCAPTCHA_ENDPOINT='https://api.yescaptcha.com'  # 或 https://cn.yescaptcha.com
 
 # 默认 OAuth/登录直连；仅在确有需要时设代理
