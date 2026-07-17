@@ -20,6 +20,9 @@
   HOHAI_OBSERVE_MODE                观察模式
   HOHAI_HOLD_OPEN_SECS              观察保留秒数
   SIGNIN_TG_BOT_TOKEN / SIGNIN_TG_CHAT_ID  通知（也兼容 TELEGRAM_BOT_TOKEN / TELEGRAM_ALLOWED_USERS）
+  HOHAI_NOTIFY              默认 1：是否发 Telegram
+  HOHAI_NOTIFY_ON_ALREADY   默认 0：今日已签到时不通知（避免双时段刷屏）
+  HOHAI_NOTIFY_VERBOSE      默认 0：简洁通知；1=带 API/调试细节
 """
 
 import concurrent.futures
@@ -48,6 +51,17 @@ HEADED = os.environ.get("HOHAI_HEADED", "1") == "1"
 KEEP_OPEN_ON_FAIL = os.environ.get("HOHAI_KEEP_OPEN_ON_FAIL", "0") == "1"
 OBSERVE_MODE = os.environ.get("HOHAI_OBSERVE_MODE", "0") == "1"
 HOLD_OPEN_SECS = int(os.environ.get("HOHAI_HOLD_OPEN_SECS", "600"))
+
+# 通知策略：默认只在「新签成功 / 真正失败」时推送，已签到静默
+def _env_bool(name, default=False):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on", "y")
+
+NOTIFY_ENABLED = _env_bool("HOHAI_NOTIFY", True)
+NOTIFY_ON_ALREADY = _env_bool("HOHAI_NOTIFY_ON_ALREADY", False)
+NOTIFY_VERBOSE = _env_bool("HOHAI_NOTIFY_VERBOSE", False)
 
 # Telegram：优先 SIGNIN_*，回退 Hermes 通用变量
 TELEGRAM_BOT_TOKEN = (
@@ -446,42 +460,84 @@ def send_telegram(text):
         print(f"[notify] Telegram 发送失败: {e}", file=sys.stderr)
 
 
+def is_already_checked_in(message, extra=None):
+    """今日已签到（非本次新签到成功）。"""
+    extra = extra or {}
+    if extra.get("already") or (extra.get("step") or {}).get("already"):
+        return True
+    msg = str(message or "")
+    return any(x in msg for x in ("页面已显示已签到", "今日已签到", "已经签到", "已签到过"))
+
+
 def format_report(ok, message, extra):
-    status = "✅ 签到完成" if ok else "❌ 签到失败"
-    lines = [
-        "HOHAI 自动签到 执行结果：" + status,
-        "结果明细：",
-    ]
-    if ok:
-        lines.append(" • ✅ 浏览器签到流程已跑通")
-        lines.append(f" • ✅ 最终结果：{message}")
-    else:
-        lines.append(f" • ❌ 失败原因：{message}")
-        if extra.get("error"):
-            lines.append(f" • ⚠️ 原始错误：{str(extra.get('error'))[:500]}")
-    if extra.get("proxy") is not None:
-        lines.append(f" • 代理：{extra.get('proxy') or '直连'}")
-    if extra.get("checkin"):
-        c = extra["checkin"]
+    """简洁通知正文。"""
+    extra = extra or {}
+    already = is_already_checked_in(message, extra)
+    ts = datetime.now().strftime("%m-%d %H:%M")
+    proxy = extra.get("proxy")
+    proxy_s = (proxy or "直连") if proxy is not None else None
+
+    if ok and already:
+        lines = [f"HOHAI · 今日已签到（{ts}）"]
+    elif ok:
+        lines = [f"HOHAI · ✅ 签到成功（{ts}）"]
+        # 优先展示 API 摘要
+        c = extra.get("checkin")
         if isinstance(c, dict):
-            lines.append(
-                f" • API：status={c.get('status')} resp={str(c.get('resp') or c.get('message') or '')[:200]}"
-            )
-    if extra.get("url"):
-        lines.append(f" • ✅ 页面位置：{extra.get('url')}" if ok else f" • 页面位置：{extra.get('url')}")
-    if extra.get("state") and not ok:
-        lines.append(f" • 调试状态：{json.dumps(extra.get('state'), ensure_ascii=False)[:500]}")
-    lines.append(f"执行时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            resp = c.get("resp") if isinstance(c.get("resp"), dict) else {}
+            amount = resp.get("amount")
+            balance = resp.get("balance")
+            unit = resp.get("currencyUnit") or "¥"
+            if amount is not None:
+                lines.append(f"+{amount}{unit}" + (f" · 余额 {balance}{unit}" if balance is not None else ""))
+            elif c.get("message") or resp.get("message"):
+                lines.append(str(c.get("message") or resp.get("message"))[:80])
+        else:
+            lines.append(str(message)[:80])
+    else:
+        lines = [f"HOHAI · ❌ 签到失败（{ts}）", str(message)[:120]]
+        if extra.get("error") and NOTIFY_VERBOSE:
+            lines.append(f"err: {str(extra.get('error'))[:160]}")
+
+    if proxy_s and (NOTIFY_VERBOSE or not ok or (ok and not already)):
+        # 成功新签 / 失败时带代理；已签到默认不带
+        if not (ok and already) or NOTIFY_VERBOSE:
+            lines.append(f"代理: {proxy_s}")
+
+    if NOTIFY_VERBOSE:
+        if extra.get("url"):
+            lines.append(f"url: {extra.get('url')}")
+        if extra.get("checkin") and not ok:
+            c = extra["checkin"]
+            if isinstance(c, dict):
+                lines.append(f"api: {str(c.get('resp') or c.get('message') or '')[:120]}")
     return "\n".join(lines)
+
+
+def should_notify(ok, message, extra):
+    if not NOTIFY_ENABLED:
+        return False
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
+    if is_already_checked_in(message, extra) and not NOTIFY_ON_ALREADY:
+        return False
+    return True
 
 
 def done(ok, message, **extra):
     data = {"ok": ok, "message": message}
     data.update(extra)
     report = format_report(ok, message, extra)
-    send_telegram(report)
+    # 终端始终打印完整 JSON 便于日志排查；TG 只发简洁文案
     print(report)
-    print(json.dumps(data, ensure_ascii=False))
+    print(json.dumps(data, ensure_ascii=False, default=str))
+    if should_notify(ok, message, extra):
+        send_telegram(report)
+    else:
+        reason = "disabled" if not NOTIFY_ENABLED else (
+            "already_silent" if is_already_checked_in(message, extra) else "no_token"
+        )
+        print(json.dumps({"event": "notify_skip", "reason": reason}, ensure_ascii=False))
     sys.exit(0 if ok else 1)
 
 

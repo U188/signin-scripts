@@ -1,6 +1,6 @@
 # signin-scripts
 
-三个站点的自动签到脚本：HOHAI、NodeLoc、NodeSeek。
+四个站点的自动签到脚本：HOHAI、VPS8、NodeLoc、NodeSeek。
 
 > 说明：仓库中的脚本已脱敏，账号、密码和 Telegram Bot 信息均通过环境变量传入。
 
@@ -8,8 +8,10 @@
 
 | 文件 | 站点 | 运行时 |
 |---|---|---|
-| `hohai-sb.py` | HOHAI | Python + SeleniumBase |
+| `hohai-sb.py` | HOHAI | Python + SeleniumBase UC（Turnstile） |
 | `run-hohai-signin.sh` | HOHAI 定时包装 | bash（source env + flock + 日志） |
+| `vps8-signin.py` | VPS8（vps8.zz.cd） | Python + SeleniumBase UC（NodeLoc OAuth + reCAPTCHA v2） |
+| `run-vps8-signin.sh` | VPS8 定时包装 | bash（source env + flock + 日志） |
 | `nodeloc-signin.py` | NodeLoc | Python + patchright |
 | `nodeseek-signin.mjs` | NodeSeek | Node.js + Chrome CDP |
 
@@ -50,6 +52,11 @@ export HOHAI_PROXY_API=1
 
 # 可选：自定义代理 API 源（| 或换行分隔）
 # export HOHAI_PROXY_API_URLS='https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5|https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt'
+
+# 通知策略（默认：新签成功 / 失败才推 TG；已签到静默，避免双时段刷屏）
+# export HOHAI_NOTIFY=1
+# export HOHAI_NOTIFY_ON_ALREADY=0
+# export HOHAI_NOTIFY_VERBOSE=0
 ```
 
 运行：
@@ -77,6 +84,50 @@ export HOHAI_PROXY_API=1
 成功判定以 `POST /api/checkin` 响应为准；验证失败会自动重开签到弹窗再试。
 
 默认代理源：ProxyScrape、Proxifly、TheSpeedX、monosans、hookzof、Geonode。
+
+### VPS8（vps8.zz.cd）
+
+```bash
+export NODELOC_USERNAME='你的 NodeLoc 用户名'
+export NODELOC_PASSWORD='你的 NodeLoc 密码'
+export VPS8_BASE='https://vps8.zz.cd'
+export VPS8_SB_PROFILE='/root/.config/seleniumbase-vps8'
+export DISPLAY=:1
+
+# reCAPTCHA v2 图片题需要打码（否则 exit 3）
+# export YESCAPTCHA_API_KEY='你的 YesCaptcha clientKey'
+# export YESCAPTCHA_ENDPOINT='https://api.yescaptcha.com'  # 或 https://cn.yescaptcha.com
+
+# 默认 OAuth/登录直连；仅在确有需要时设代理
+# export VPS8_PROXY='user:pass@host:port'
+```
+
+流程（实测必需）：
+
+1. **先完整登录 NodeLoc**（`www.nodeloc.com`）
+2. 再在 vps8 `/login` 点 **Nodeloc** OAuth → `/dashboard`
+3. 打开 `/points/signin`，过 reCAPTCHA 后 `POST /api/client/points/signin`
+
+冷启动 OAuth（未先登录 NodeLoc）常见失败：`Nodeloc request failed: Operation timed out...`
+
+运行：
+
+```bash
+# 私有 env：/root/.config/vps8-signin.env（chmod 600，勿提交）
+./run-vps8-signin.sh
+```
+
+退出码：`0` 成功/已签到 · `2` 登录/OAuth 失败 · `3` CAPTCHA（缺 key 或打码失败） · `4` API 错误 · `1` 其它。
+
+Hermes 定时（有 YesCaptcha key 后再开，建议避开 HOHAI 整点）：
+
+```bash
+hermes cron create '5 8 * * *' \
+  --name vps8-signin-daily-0805 \
+  --script run-vps8-signin.sh \
+  --no-agent \
+  --deliver local
+```
 
 ### NodeLoc
 
@@ -121,17 +172,27 @@ export OPENCLAW_CDP_HTTP='http://127.0.0.1:18800'
 3. flock 防重入
 4. 写日志到 `~/.local/share/hohai-signin/logs/`
 
-若使用 Hermes Agent，也可：
+若使用 Hermes Agent，也可（**纯程序，不经 AI**；`--no-agent` + `--deliver local`）：
 
 ```bash
+# 建议双时段兜底；已签到默认不发 TG
 hermes cron create '0 8 * * *' \
   --name hohai-signin-daily-0800 \
   --script run-hohai-signin.sh \
   --no-agent \
   --deliver local
+
+hermes cron create '0 20 * * *' \
+  --name hohai-signin-daily-2000 \
+  --script run-hohai-signin.sh \
+  --no-agent \
+  --deliver local
+
+# 多代理 headed Chrome 建议：
+# hermes config set cron.script_timeout_seconds 600
 ```
 
-（需把 `run-hohai-signin.sh` 放到 `~/.hermes/scripts/`）
+（需把 `run-hohai-signin.sh` 与 `hohai-sb.py` 放到 `~/.hermes/scripts/`，或让包装脚本指向 Desktop 路径。）
 
 ### 通用 crontab（直接传环境变量）
 
@@ -147,10 +208,11 @@ hermes cron create '0 8 * * *' \
 
 ## 依赖提示
 
-- HOHAI：需要 SeleniumBase 环境、可用 Chrome，以及 headed 模式下的显示（如 `DISPLAY=:1`）。机房 IP 建议配置 `HOHAI_PROXY`（需同时能访问站点与 `challenges.cloudflare.com`）。
+- HOHAI：需要 SeleniumBase 环境、可用 Chrome，以及 headed 模式下的显示（如 `DISPLAY=:1`）。机房 IP 建议 `HOHAI_PROXY_API=1` 动态测活（需同时能访问站点与 `challenges.cloudflare.com`）。
+- VPS8：SeleniumBase UC + NodeLoc 账号；自动过 reCAPTCHA v2 需 `YESCAPTCHA_API_KEY`。
 - NodeLoc：需要 `patchright` 和可用 Chrome/CDP。
 - NodeSeek：需要 Node.js 运行时支持 `fetch` 和 `WebSocket`，并能访问 Chrome CDP。
 
 ## 安全
 
-不要把真实账号、密码、Bot Token、Chat ID、代理账号写进公开仓库；请使用环境变量或本机私有配置（如 `chmod 600` 的 env 文件）。
+不要把真实账号、密码、Bot Token、Chat ID、代理账号、YesCaptcha key 写进公开仓库；请使用环境变量或本机私有配置（如 `chmod 600` 的 `/root/.config/*-signin.env`）。
